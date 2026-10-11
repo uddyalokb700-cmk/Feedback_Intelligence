@@ -1,0 +1,81 @@
+{
+  "model_version": "v1.0-tfidf-logreg",
+  "model_type": "TF-IDF (1-2 ngrams) + Logistic Regression (balanced)",
+  "trained_at": "2026-10-11T15:12:45.823987Z",
+  "sample_count": 1530,
+  "train_size": 1224,
+  "test_size": 306,
+  "classes": [
+    "POSITIVE",
+    "NEUTRAL",
+    "NEGATIVE"
+  ],
+  "evaluation_metrics": {
+    "accuracy": 1.0,
+    "macro_precision": 1.0,
+    "macro_recall": 1.0,
+    "macro_f1": 1.0,
+    "weighted_f1": 1.0,
+    "per_class": {
+      "POSITIVE": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0,
+        "support": 102.0
+      },
+      "NEUTRAL": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0,
+        "support": 102.0
+      },
+      "NEGATIVE": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1_score": 1.0,
+        "support": 102.0
+      }
+    }
+  },
+  "confusion_matrix": {
+    "labels": [
+      "POSITIVE",
+      "NEUTRAL",
+      "NEGATIVE"
+    ],
+    "matrix": [
+      [
+        102,
+        0,
+        0
+      ],
+      [
+        0,
+        102,
+        0
+      ],
+      [
+        0,
+        0,
+        102
+      ]
+    ]
+  },
+  "hyperparameters": {
+    "vectorizer_ngram_range": [
+      1,
+      2
+    ],
+    "vectorizer_max_features": 12000,
+    "vectorizer_sublinear_tf": true,
+    "classifier_C": 1.0,
+    "classifier_class_weight": "balanced",
+    "classifier_max_iter": 1000
+  },
+  "known_limitations": [
+    "Does not parse complex sarcasm or irony without explicit lexical markers.",
+    "Domain-specific technical jargon may receive lower confidence.",
+    "Short texts (<3 words) provide limited context for reliable neutral vs positive separation.",
+    "Probabilities reflect softmax logistic regression outputs and should be interpreted as calibrated confidence estimates rather than absolute ground truth."
+  ]
+}

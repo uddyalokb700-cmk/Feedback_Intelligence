@@ -1,0 +1,362 @@
+{% extends "base.html" %}
+
+{% block title %}Review Explorer - {{ dataset.name }} - CFI{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+  <!-- Top Navigation Bar -->
+  <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+    <div>
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb small mb-1">
+          <li class="breadcrumb-item"><a href="{% url 'datasets:dashboard' %}" class="text-secondary text-decoration-none">Dashboard</a></li>
+          <li class="breadcrumb-item"><a href="{% url 'analytics:analytics_dashboard' dataset.id %}" class="text-secondary text-decoration-none">{{ dataset.name }}</a></li>
+          <li class="breadcrumb-item active text-white" aria-current="page">Review Explorer</li>
+        </ol>
+      </nav>
+      <h2 class="fw-bold text-white mb-0">Review Explorer</h2>
+      <div class="text-secondary small mt-1">
+        Searching and filtering {{ dataset.valid_rows }} classified reviews from <strong>{{ dataset.name }}</strong>
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{% url 'analytics:analytics_dashboard' dataset.id %}" class="btn btn-secondary-cfi">
+        <i class="bi bi-pie-chart me-1"></i> Dashboard
+      </a>
+      <button id="exportCsvBtn" class="btn btn-primary-cfi">
+        <i class="bi bi-download me-1"></i> Export Filtered CSV
+      </button>
+    </div>
+  </div>
+
+  <!-- Filters & Search Toolbar -->
+  <div class="card-cfi p-3 mb-4">
+    <div class="row g-2 align-items-center">
+      <!-- Search -->
+      <div class="col-md-4">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text bg-dark border-subtle text-secondary"><i class="bi bi-search"></i></span>
+          <input type="text" id="searchInput" class="form-control form-control-cfi" placeholder="Search feedback text or review ID...">
+        </div>
+      </div>
+
+      <!-- Sentiment Filter -->
+      <div class="col-6 col-sm-4 col-md-2">
+        <select id="sentimentFilter" class="form-select form-select-cfi form-select-sm">
+          <option value="">All Sentiments</option>
+          <option value="POSITIVE">Positive</option>
+          <option value="NEUTRAL">Neutral</option>
+          <option value="NEGATIVE">Negative</option>
+        </select>
+      </div>
+
+      <!-- Rating Filter -->
+      <div class="col-6 col-sm-4 col-md-2">
+        <select id="ratingFilter" class="form-select form-select-cfi form-select-sm">
+          <option value="">All Ratings</option>
+          <option value="5">5 Stars</option>
+          <option value="4">4 Stars</option>
+          <option value="3">3 Stars</option>
+          <option value="2">2 Stars</option>
+          <option value="1">1 Star</option>
+        </select>
+      </div>
+
+      <!-- Category Filter -->
+      <div class="col-6 col-sm-4 col-md-2">
+        <select id="categoryFilter" class="form-select form-select-cfi form-select-sm">
+          <option value="">All Categories</option>
+          {% for cat in categories %}
+          <option value="{{ cat }}">{{ cat }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Sort By -->
+      <div class="col-6 col-sm-4 col-md-2">
+        <select id="orderingFilter" class="form-select form-select-cfi form-select-sm">
+          <option value="-id">Newest Added</option>
+          <option value="id">Oldest Added</option>
+          <option value="-rating">Rating: High to Low</option>
+          <option value="rating">Rating: Low to High</option>
+          <option value="-date">Review Date: Recent</option>
+          <option value="-confidence">Model Confidence</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Review Table Card -->
+  <div class="card-cfi">
+    <div class="card-header-cfi">
+      <span id="resultsCountText"><i class="bi bi-table me-2 text-primary"></i>Loading reviews...</span>
+      <div id="tableSpinner" class="spinner-border spinner-border-sm text-primary d-none" role="status"></div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-cfi align-middle mb-0">
+        <thead>
+          <tr>
+            <th style="width: 80px;">ID</th>
+            <th>Customer Review</th>
+            <th style="width: 110px;">Rating</th>
+            <th style="width: 140px;">Category</th>
+            <th style="width: 120px;">Date</th>
+            <th style="width: 140px;">Sentiment</th>
+            <th style="width: 70px;" class="text-end">Inspect</th>
+          </tr>
+        </thead>
+        <tbody id="reviewsTableBody">
+          <tr>
+            <td colspan="7" class="text-center py-5 text-secondary">
+              <div class="spinner-border text-primary spinner-border-sm me-2" role="status"></div> Loading feedback records...
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination Footer -->
+    <div class="p-3 border-top border-subtle d-flex justify-content-between align-items-center">
+      <div class="text-secondary small" id="pageInfoText">Page 1</div>
+      <div class="btn-group btn-group-sm">
+        <button id="prevPageBtn" class="btn btn-secondary-cfi" disabled>
+          <i class="bi bi-chevron-left me-1"></i> Previous
+        </button>
+        <button id="nextPageBtn" class="btn btn-secondary-cfi" disabled>
+          Next <i class="bi bi-chevron-right ms-1"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Review Detail Inspection Modal -->
+<div class="modal fade" id="reviewDetailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content card-cfi">
+      <div class="modal-header border-subtle">
+        <h5 class="modal-title text-white">Review Record Inspection</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-4">
+          <label class="text-secondary small fw-bold text-uppercase d-block mb-1">Customer Review Text</label>
+          <div id="modalReviewText" class="p-3 rounded bg-dark border border-subtle text-white fs-6"></div>
+        </div>
+
+        <div class="row g-3 mb-4">
+          <div class="col-md-4">
+            <label class="text-secondary small fw-bold text-uppercase d-block mb-1">Assigned Rating</label>
+            <div id="modalRating" class="fw-semibold text-warning"></div>
+          </div>
+          <div class="col-md-4">
+            <label class="text-secondary small fw-bold text-uppercase d-block mb-1">Product Category</label>
+            <div id="modalCategory" class="text-white"></div>
+          </div>
+          <div class="col-md-4">
+            <label class="text-secondary small fw-bold text-uppercase d-block mb-1">Submission Date</label>
+            <div id="modalDate" class="text-white"></div>
+          </div>
+        </div>
+
+        <div class="p-3 rounded bg-dark border border-subtle mb-3">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <label class="text-secondary small fw-bold text-uppercase mb-0">ML Model Prediction</label>
+            <span id="modalModelVersion" class="badge bg-secondary"></span>
+          </div>
+
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <span id="modalSentimentBadge" class="badge fs-6"></span>
+            <span class="text-secondary small">Confidence: <strong id="modalConfidence" class="text-white"></strong></span>
+          </div>
+
+          <label class="text-muted small d-block mb-1">Softmax Class Probabilities:</label>
+          <div class="progress bg-secondary bg-opacity-25" style="height: 12px;">
+            <div id="modalPosBar" class="progress-bar bg-success" style="width: 0%" title="Positive"></div>
+            <div id="modalNeuBar" class="progress-bar bg-warning" style="width: 0%" title="Neutral"></div>
+            <div id="modalNegBar" class="progress-bar bg-danger" style="width: 0%" title="Negative"></div>
+          </div>
+          <div class="d-flex justify-content-between small text-secondary mt-1">
+            <span class="text-success">&bull; Positive: <span id="modalPosProb"></span></span>
+            <span class="text-warning">&bull; Neutral: <span id="modalNeuProb"></span></span>
+            <span class="text-danger">&bull; Negative: <span id="modalNegProb"></span></span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer border-subtle">
+        <button type="button" class="btn btn-secondary-cfi" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const datasetId = '{{ dataset.id }}';
+let currentPage = 1;
+let currentTotal = 0;
+let debounceTimer = null;
+const detailModal = new bootstrap.Modal(document.getElementById('reviewDetailModal'));
+
+async function fetchReviews(page = 1) {
+  currentPage = page;
+  const tableSpinner = document.getElementById('tableSpinner');
+  const tbody = document.getElementById('reviewsTableBody');
+  tableSpinner.classList.remove('d-none');
+
+  const search = document.getElementById('searchInput').value.trim();
+  const sentiment = document.getElementById('sentimentFilter').value;
+  const rating = document.getElementById('ratingFilter').value;
+  const category = document.getElementById('categoryFilter').value;
+  const ordering = document.getElementById('orderingFilter').value;
+
+  const params = new URLSearchParams({ page: currentPage });
+  if (search) params.append('search', search);
+  if (sentiment) params.append('sentiment', sentiment);
+  if (rating) params.append('rating', rating);
+  if (category) params.append('category', category);
+  if (ordering) params.append('ordering', ordering);
+
+  try {
+    const data = await apiFetch(`/api/datasets/${datasetId}/reviews/?${params.toString()}`);
+    currentTotal = data.count;
+    document.getElementById('resultsCountText').innerHTML = `<i class="bi bi-table me-2 text-primary"></i>Showing ${data.results.length} of ${data.count} reviews`;
+    document.getElementById('pageInfoText').textContent = `Page ${currentPage} of ${Math.ceil(data.count / 20) || 1} (${data.count} total)`;
+
+    document.getElementById('prevPageBtn').disabled = !data.previous;
+    document.getElementById('nextPageBtn').disabled = !data.next;
+
+    if (!data.results.length) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="7" class="text-center py-5 text-secondary">
+            <i class="bi bi-search fs-2 d-block mb-2 text-muted"></i>
+            No reviews match the selected filter criteria.
+          </td>
+        </tr>`;
+      return;
+    }
+
+    tbody.innerHTML = data.results.map(r => {
+      const sent = r.sentiment || {};
+      let badgeClass = 'badge-sentiment-neu';
+      if (sent.label === 'POSITIVE') badgeClass = 'badge-sentiment-pos';
+      else if (sent.label === 'NEGATIVE') badgeClass = 'badge-sentiment-neg';
+
+      const stars = r.rating ? '★'.repeat(Math.round(r.rating)) + '☆'.repeat(5 - Math.round(r.rating)) : '—';
+      const confPct = sent.confidence ? `${(sent.confidence * 100).toFixed(0)}%` : 'N/A';
+
+      // Safe escape string for onclick JSON
+      const jsonStr = encodeURIComponent(JSON.stringify(r));
+
+      return `
+        <tr style="cursor: pointer;" onclick="openReviewModal('${jsonStr}')">
+          <td class="text-secondary font-monospace small">${r.external_review_id || '#' + r.id}</td>
+          <td>
+            <div class="text-white text-truncate" style="max-width: 480px;">${escapeHtml(r.review_text)}</div>
+          </td>
+          <td><span class="star-rating">${stars}</span></td>
+          <td><span class="text-secondary small">${r.product_category ? escapeHtml(r.product_category) : '—'}</span></td>
+          <td class="text-secondary small">${r.review_date || '—'}</td>
+          <td>
+            <span class="badge ${badgeClass}" title="Model Confidence: ${confPct}">
+              ${sent.label || 'PENDING'} <small>(${confPct})</small>
+            </span>
+          </td>
+          <td class="text-end">
+            <button class="btn btn-secondary-cfi btn-sm py-0 px-2" title="Inspect Prediction Details">
+              <i class="bi bi-eye"></i>
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+  } catch (err) {
+    console.error('Reviews load error:', err);
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4 text-danger">${err.message || 'Error loading reviews'}</td></tr>`;
+  } finally {
+    tableSpinner.classList.add('d-none');
+  }
+}
+
+function openReviewModal(encodedJson) {
+  const r = JSON.parse(decodeURIComponent(encodedJson));
+  const sent = r.sentiment || {};
+
+  document.getElementById('modalReviewText').textContent = r.review_text;
+  document.getElementById('modalRating').textContent = r.rating ? `${r.rating} / 5.0` : 'Not provided';
+  document.getElementById('modalCategory').textContent = r.product_category || 'Not categorized';
+  document.getElementById('modalDate').textContent = r.review_date || 'Not recorded';
+  document.getElementById('modalModelVersion').textContent = sent.model_version || 'N/A';
+
+  const badgeEl = document.getElementById('modalSentimentBadge');
+  badgeEl.textContent = sent.label || 'PENDING';
+  badgeEl.className = 'badge fs-6 ' + (
+    sent.label === 'POSITIVE' ? 'badge-sentiment-pos' :
+    sent.label === 'NEGATIVE' ? 'badge-sentiment-neg' : 'badge-sentiment-neu'
+  );
+
+  document.getElementById('modalConfidence').textContent = sent.confidence ? `${(sent.confidence * 100).toFixed(1)}%` : 'N/A';
+
+  const posPct = sent.positive_prob ? (sent.positive_prob * 100).toFixed(1) : '0';
+  const neuPct = sent.neutral_prob ? (sent.neutral_prob * 100).toFixed(1) : '0';
+  const negPct = sent.negative_prob ? (sent.negative_prob * 100).toFixed(1) : '0';
+
+  document.getElementById('modalPosBar').style.width = posPct + '%';
+  document.getElementById('modalNeuBar').style.width = neuPct + '%';
+  document.getElementById('modalNegBar').style.width = negPct + '%';
+
+  document.getElementById('modalPosProb').textContent = posPct + '%';
+  document.getElementById('modalNeuProb').textContent = neuPct + '%';
+  document.getElementById('modalNegProb').textContent = negPct + '%';
+
+  detailModal.show();
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Event Listeners
+document.getElementById('searchInput').addEventListener('input', () => {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => fetchReviews(1), 300);
+});
+
+['sentimentFilter', 'ratingFilter', 'categoryFilter', 'orderingFilter'].forEach(id => {
+  document.getElementById(id).addEventListener('change', () => fetchReviews(1));
+});
+
+document.getElementById('prevPageBtn').addEventListener('click', () => {
+  if (currentPage > 1) fetchReviews(currentPage - 1);
+});
+
+document.getElementById('nextPageBtn').addEventListener('click', () => {
+  fetchReviews(currentPage + 1);
+});
+
+// CSV Export
+document.getElementById('exportCsvBtn').addEventListener('click', () => {
+  const search = document.getElementById('searchInput').value.trim();
+  const sentiment = document.getElementById('sentimentFilter').value;
+  const rating = document.getElementById('ratingFilter').value;
+  const category = document.getElementById('categoryFilter').value;
+
+  const params = new URLSearchParams();
+  if (search) params.append('search', search);
+  if (sentiment) params.append('sentiment', sentiment);
+  if (rating) params.append('rating', rating);
+  if (category) params.append('category', category);
+
+  window.location.href = `/api/datasets/${datasetId}/reviews/export/?${params.toString()}`;
+});
+
+document.addEventListener('DOMContentLoaded', () => fetchReviews(1));
+</script>
+{% endblock %}

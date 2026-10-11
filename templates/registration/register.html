@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}Create Account - Customer Feedback Intelligence{% endblock %}
+
+{% block content %}
+<div class="container py-5 my-auto">
+  <div class="row justify-content-center">
+    <div class="col-md-6 col-lg-5">
+      <div class="card-cfi p-4 p-md-5">
+        <div class="text-center mb-4">
+          <div class="d-inline-flex align-items-center justify-content-center bg-primary bg-opacity-10 text-primary rounded-circle mb-3" style="width: 56px; height: 56px;">
+            <i class="bi bi-person-plus-fill fs-3"></i>
+          </div>
+          <h3 class="fw-bold text-white mb-1">Create an Account</h3>
+          <p class="text-secondary small">Start analyzing customer feedback with ML intelligence</p>
+        </div>
+
+        <div id="registerAlert" class="alert alert-danger d-none border-0 small" role="alert"></div>
+
+        <form id="registerForm" method="post">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label for="regUsername" class="form-label text-secondary small fw-medium">Username</label>
+            <div class="input-group">
+              <span class="input-group-text bg-dark border-subtle text-secondary"><i class="bi bi-person"></i></span>
+              <input type="text" class="form-control form-control-cfi" id="regUsername" name="username" placeholder="Choose a username" required autofocus>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label for="regEmail" class="form-label text-secondary small fw-medium">Email Address</label>
+            <div class="input-group">
+              <span class="input-group-text bg-dark border-subtle text-secondary"><i class="bi bi-envelope"></i></span>
+              <input type="email" class="form-control form-control-cfi" id="regEmail" name="email" placeholder="name@company.com" required>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label for="regPassword" class="form-label text-secondary small fw-medium">Password</label>
+            <div class="input-group">
+              <span class="input-group-text bg-dark border-subtle text-secondary"><i class="bi bi-lock"></i></span>
+              <input type="password" class="form-control form-control-cfi" id="regPassword" name="password" placeholder="At least 8 characters" required minlength="8">
+            </div>
+          </div>
+
+          <div class="mb-4">
+            <label for="regPasswordConfirm" class="form-label text-secondary small fw-medium">Confirm Password</label>
+            <div class="input-group">
+              <span class="input-group-text bg-dark border-subtle text-secondary"><i class="bi bi-lock-fill"></i></span>
+              <input type="password" class="form-control form-control-cfi" id="regPasswordConfirm" name="password_confirm" placeholder="Confirm your password" required minlength="8">
+            </div>
+          </div>
+
+          <button type="submit" id="regSubmitBtn" class="btn btn-primary-cfi w-100 py-2 mb-3">
+            <span id="regSpinner" class="spinner-border spinner-border-sm me-2 d-none" role="status" aria-hidden="true"></span>
+            <span id="regBtnText">Register Account</span>
+          </button>
+        </form>
+
+        <div class="text-center mt-3 pt-3 border-top border-subtle">
+          <span class="text-secondary small">Already have an account?</span>
+          <a href="{% url 'accounts:login' %}" class="text-primary small fw-medium ms-1 text-decoration-none">Sign in</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.getElementById('registerForm').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const alertEl = document.getElementById('registerAlert');
+  const btnSpinner = document.getElementById('regSpinner');
+  const btnText = document.getElementById('regBtnText');
+  const submitBtn = document.getElementById('regSubmitBtn');
+
+  alertEl.classList.add('d-none');
+  btnSpinner.classList.remove('d-none');
+  btnText.textContent = 'Registering...';
+  submitBtn.disabled = true;
+
+  const username = document.getElementById('regUsername').value.trim();
+  const email = document.getElementById('regEmail').value.trim();
+  const password = document.getElementById('regPassword').value;
+  const password_confirm = document.getElementById('regPasswordConfirm').value;
+
+  if (password !== password_confirm) {
+    alertEl.textContent = 'Passwords do not match.';
+    alertEl.classList.remove('d-none');
+    btnSpinner.classList.add('d-none');
+    btnText.textContent = 'Register Account';
+    submitBtn.disabled = false;
+    return;
+  }
+
+  try {
+    const data = await apiFetch('/api/auth/register/', {
+      method: 'POST',
+      body: { username, email, password, password_confirm }
+    });
+    window.location.href = '/dashboard/';
+  } catch (err) {
+    alertEl.textContent = err.message || 'Registration failed. Please check your inputs.';
+    alertEl.classList.remove('d-none');
+  } finally {
+    btnSpinner.classList.add('d-none');
+    btnText.textContent = 'Register Account';
+    submitBtn.disabled = false;
+  }
+});
+</script>
+{% endblock %}

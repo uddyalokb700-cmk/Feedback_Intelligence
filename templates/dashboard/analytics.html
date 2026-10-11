@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics - {{ dataset.name }} - CFI{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <!-- Top Breadcrumb & Header -->
+  <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+    <div>
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb small mb-1">
+          <li class="breadcrumb-item"><a href="{% url 'datasets:dashboard' %}" class="text-secondary text-decoration-none">Dashboard</a></li>
+          <li class="breadcrumb-item active text-white" aria-current="page">{{ dataset.name }}</li>
+        </ol>
+      </nav>
+      <h2 class="fw-bold text-white mb-0">{{ dataset.name }}</h2>
+      <div class="text-secondary small mt-1">
+        Model: <span class="badge bg-dark border border-subtle text-primary">{{ dataset.model_version }}</span> &bull;
+        Processed: {{ summary.total_valid_reviews }} valid reviews ({{ summary.total_invalid_rows }} invalid excluded)
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{% url 'reviews:explorer_page' dataset.id %}" class="btn btn-primary-cfi">
+        <i class="bi bi-list-columns-reverse me-1"></i> Review Explorer
+      </a>
+      <a href="{% url 'datasets:detail_page' dataset.id %}" class="btn btn-secondary-cfi">
+        <i class="bi bi-info-circle me-1"></i> Dataset Details
+      </a>
+    </div>
+  </div>
+
+  <!-- KPI Summary Cards -->
+  <div class="row g-3 mb-4">
+    <div class="col-sm-6 col-lg-3">
+      <div class="kpi-card">
+        <div class="kpi-indicator kpi-primary"></div>
+        <div class="kpi-title">Total Valid Reviews</div>
+        <div class="kpi-value">{{ summary.total_valid_reviews }}</div>
+        <div class="kpi-subtitle">{{ summary.total_invalid_rows }} invalid rows rejected</div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="kpi-card">
+        <div class="kpi-indicator kpi-neu"></div>
+        <div class="kpi-title">Average Rating</div>
+        <div class="kpi-value text-warning">
+          {% if summary.average_rating %}{{ summary.average_rating }} <small class="fs-6 text-muted">/ 5</small>{% else %}N/A{% endif %}
+        </div>
+        <div class="kpi-subtitle">
+          {% if summary.low_rating_rate is not None %}{{ summary.low_rating_rate }}% rated &le; 2 stars{% else %}No rating column in CSV{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="kpi-card">
+        <div class="kpi-indicator kpi-pos"></div>
+        <div class="kpi-title">Positive Feedback</div>
+        <div class="kpi-value text-success">{{ summary.positive_percentage }}%</div>
+        <div class="kpi-subtitle">{{ summary.positive_count }} reviews classified positive</div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="kpi-card">
+        <div class="kpi-indicator kpi-neg"></div>
+        <div class="kpi-title">Negative Review Rate</div>
+        <div class="kpi-value text-danger">{% widthratio summary.negative_review_rate 1 100 %}%</div>
+        <div class="kpi-subtitle">{{ summary.negative_count }} reviews classified negative</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Charts Row 1: Sentiment Distribution & Rating Distribution -->
+  <div class="row g-3 mb-4">
+    <div class="col-lg-5">
+      <div class="card-cfi h-100">
+        <div class="card-header-cfi">
+          <span><i class="bi bi-pie-chart-fill me-2 text-primary"></i>Sentiment Distribution</span>
+          <a href="{% url 'reviews:explorer_page' dataset.id %}" class="small text-secondary text-decoration-none">View reviews &rarr;</a>
+        </div>
+        <div class="p-4 d-flex flex-column align-items-center justify-content-center">
+          <div style="position: relative; height: 240px; width: 100%; max-width: 320px;">
+            <canvas id="sentimentPieChart"></canvas>
+          </div>
+          <div class="d-flex justify-content-center gap-4 mt-3 small">
+            <div><span class="badge bg-success me-1">&bull;</span>Positive: <strong>{{ summary.positive_count }}</strong> ({{ summary.positive_percentage }}%)</div>
+            <div><span class="badge bg-warning me-1">&bull;</span>Neutral: <strong>{{ summary.neutral_count }}</strong> ({{ summary.neutral_percentage }}%)</div>
+            <div><span class="badge bg-danger me-1">&bull;</span>Negative: <strong>{{ summary.negative_count }}</strong> ({{ summary.negative_percentage }}%)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-7">
+      <div class="card-cfi h-100">
+        <div class="card-header-cfi">
+          <span><i class="bi bi-bar-chart-fill me-2 text-warning"></i>Rating Star Distribution</span>
+          <span class="text-secondary small">Customer review ratings</span>
+        </div>
+        <div class="p-4">
+          <div style="position: relative; height: 260px; width: 100%;">
+            <canvas id="ratingBarChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Charts Row 2: Trends Over Time -->
+  <div class="card-cfi mb-4">
+    <div class="card-header-cfi">
+      <span><i class="bi bi-graph-up-arrow me-2 text-primary"></i>Review Volume & Sentiment Trends Over Time</span>
+      <span class="text-secondary small">Daily aggregation</span>
+    </div>
+    <div class="p-4">
+      <div style="position: relative; height: 280px; width: 100%;">
+        <canvas id="trendsChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 3: Category Comparisons & Top Keywords -->
+  <div class="row g-3 mb-4">
+    <div class="col-lg-6">
+      <div class="card-cfi h-100">
+        <div class="card-header-cfi">
+          <span><i class="bi bi-tags-fill me-2 text-info"></i>Product Category Performance</span>
+          <span class="text-secondary small">Volume & negative rate</span>
+        </div>
+        <div class="p-4">
+          <div id="categoryContainer" style="position: relative; height: 260px; width: 100%;">
+            <canvas id="categoryChart"></canvas>
+          </div>
+          <div id="noCategoryAlert" class="text-center py-5 d-none text-secondary small">
+            No product categories provided in dataset CSV.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card-cfi h-100">
+        <div class="card-header-cfi">
+          <span><i class="bi bi-chat-quote-fill me-2 text-success"></i>Frequently Mentioned Terms</span>
+          <span class="text-secondary small">Recurring topics by sentiment</span>
+        </div>
+        <div class="p-3">
+          <div class="row g-3">
+            <div class="col-6 border-end border-subtle">
+              <h6 class="text-success small fw-bold mb-3"><i class="bi bi-hand-thumbs-up-fill me-1"></i>Top Praise Terms</h6>
+              <ul id="positiveTermsList" class="list-unstyled small mb-0">
+                <li class="text-secondary">Loading terms...</li>
+              </ul>
+            </div>
+            <div class="col-6">
+              <h6 class="text-danger small fw-bold mb-3"><i class="bi bi-hand-thumbs-down-fill me-1"></i>Top Complaint Terms</h6>
+              <ul id="negativeTermsList" class="list-unstyled small mb-0">
+                <li class="text-secondary">Loading terms...</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const datasetId = '{{ dataset.id }}';
+
+// 1. Sentiment Pie Chart
+const sentimentCtx = document.getElementById('sentimentPieChart').getContext('2d');
+new Chart(sentimentCtx, {
+  type: 'doughnut',
+  data: {
+    labels: ['Positive', 'Neutral', 'Negative'],
+    datasets: [{
+      data: [{{ summary.positive_count }}, {{ summary.neutral_count }}, {{ summary.negative_count }}],
+      backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
+      borderColor: '#111827',
+      borderWidth: 2,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false }
+    },
+    cutout: '65%'
+  }
+});
+
+// 2. Rating Bar Chart
+const ratingCtx = document.getElementById('ratingBarChart').getContext('2d');
+const ratingDist = {{ summary.rating_distribution|default:"{}"|safe }};
+const ratingLabels = Object.keys(ratingDist).sort();
+const ratingValues = ratingLabels.map(k => ratingDist[k]);
+
+new Chart(ratingCtx, {
+  type: 'bar',
+  data: {
+    labels: ratingLabels.length ? ratingLabels.map(l => l + ' Star' + (l === '1' ? '' : 's')) : ['1 Star', '2 Stars', '3 Stars', '4 Stars', '5 Stars'],
+    datasets: [{
+      label: 'Review Count',
+      data: ratingValues.length ? ratingValues : [0, 0, 0, 0, 0],
+      backgroundColor: '#f59e0b',
+      borderRadius: 6
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      y: { grid: { color: '#243044' }, ticks: { color: '#94a3b8' } },
+      x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
+    }
+  }
+});
+
+// 3. Trends Over Time Fetch & Render
+async function loadTrends() {
+  try {
+    const data = await apiFetch(`/api/datasets/${datasetId}/trends/`);
+    const trendsCtx = document.getElementById('trendsChart').getContext('2d');
+
+    new Chart(trendsCtx, {
+      type: 'line',
+      data: {
+        labels: data.dates.length ? data.dates : ['No Date Data'],
+        datasets: [
+          {
+            label: 'Positive',
+            data: data.positive,
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            fill: true,
+            tension: 0.3
+          },
+          {
+            label: 'Negative',
+            data: data.negative,
+            borderColor: '#ef4444',
+            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+            fill: true,
+            tension: 0.3
+          },
+          {
+            label: 'Neutral',
+            data: data.neutral,
+            borderColor: '#f59e0b',
+            tension: 0.3
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          y: { grid: { color: '#243044' }, ticks: { color: '#94a3b8' } },
+          x: { grid: { color: '#243044' }, ticks: { color: '#94a3b8' } }
+        },
+        plugins: {
+          legend: { labels: { color: '#94a3b8' } }
+        }
+      }
+    });
+  } catch (err) {
+    console.error('Error loading trends:', err);
+  }
+}
+
+// 4. Category Comparison Fetch & Render
+async function loadCategories() {
+  try {
+    const categories = await apiFetch(`/api/datasets/${datasetId}/categories/`);
+    if (!categories || !categories.length) {
+      document.getElementById('categoryContainer').classList.add('d-none');
+      document.getElementById('noCategoryAlert').classList.remove('d-none');
+      return;
+    }
+
+    const catCtx = document.getElementById('categoryChart').getContext('2d');
+    new Chart(catCtx, {
+      type: 'bar',
+      data: {
+        labels: categories.slice(0, 7).map(c => c.category),
+        datasets: [
+          {
+            label: 'Positive',
+            data: categories.slice(0, 7).map(c => c.positive_count),
+            backgroundColor: '#10b981',
+            borderRadius: 4
+          },
+          {
+            label: 'Negative',
+            data: categories.slice(0, 7).map(c => c.negative_count),
+            backgroundColor: '#ef4444',
+            borderRadius: 4
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#94a3b8' } }
+        },
+        scales: {
+          y: { grid: { color: '#243044' }, ticks: { color: '#94a3b8' } },
+          x: { grid: { color: '#243044' }, ticks: { color: '#94a3b8' } }
+        }
+      }
+    });
+  } catch (err) {
+    console.error('Error loading categories:', err);
+  }
+}
+
+// 5. Top Terms Fetch
+async function loadTopTerms() {
+  try {
+    const terms = await apiFetch(`/api/datasets/${datasetId}/top-terms/`);
+    const posList = document.getElementById('positiveTermsList');
+    const negList = document.getElementById('negativeTermsList');
+
+    posList.innerHTML = terms.positive_terms.length
+      ? terms.positive_terms.map(t => `<li class="d-flex justify-content-between py-1 border-bottom border-subtle"><span class="text-white">${t.term}</span><span class="badge bg-success bg-opacity-25 text-success">${t.count}</span></li>`).join('')
+      : '<li class="text-secondary">No significant positive terms.</li>';
+
+    negList.innerHTML = terms.negative_terms.length
+      ? terms.negative_terms.map(t => `<li class="d-flex justify-content-between py-1 border-bottom border-subtle"><span class="text-white">${t.term}</span><span class="badge bg-danger bg-opacity-25 text-danger">${t.count}</span></li>`).join('')
+      : '<li class="text-secondary">No significant complaint terms.</li>';
+  } catch (err) {
+    console.error('Error loading top terms:', err);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadTrends();
+  loadCategories();
+  loadTopTerms();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+
+{% block title %}Model Evaluation & Architecture - Customer Feedback Intelligence{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <!-- Title & Subtitle -->
+  <div class="mb-4">
+    <nav aria-label="breadcrumb">
+      <ol class="breadcrumb small mb-1">
+        <li class="breadcrumb-item"><a href="{% url 'datasets:dashboard' %}" class="text-secondary text-decoration-none">Dashboard</a></li>
+        <li class="breadcrumb-item active text-white" aria-current="page">Model Architecture & Evaluation</li>
+      </ol>
+    </nav>
+    <h2 class="fw-bold text-white mb-1">Sentiment Classification Model</h2>
+    <p class="text-secondary mb-0">Production Scikit-learn TF-IDF + Logistic Regression Baseline Pipeline</p>
+  </div>
+
+  <!-- Model Overview KPI Row -->
+  <div class="row g-3 mb-4">
+    <div class="col-sm-6 col-lg-3">
+      <div class="kpi-card">
+        <div class="kpi-indicator kpi-primary"></div>
+        <div class="kpi-title">Active Model Version</div>
+        <div class="kpi-value text-primary fs-3">{{ metadata.model_version|default:"v1.0" }}</div>
+        <div class="kpi-subtitle">TF-IDF &bull; LogReg (Balanced)</div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="kpi-card">
+        <div class="kpi-indicator kpi-pos"></div>
+        <div class="kpi-title">Held-out Accuracy</div>
+        <div class="kpi-value text-success">
+          {% if metadata.evaluation_metrics %}{% widthratio metadata.evaluation_metrics.accuracy 1 100 %}%{% else %}Pending{% endif %}
+        </div>
+        <div class="kpi-subtitle">Stratified 20% test partition</div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="kpi-card">
+        <div class="kpi-indicator kpi-neu"></div>
+        <div class="kpi-title">Macro F1-Score</div>
+        <div class="kpi-value text-warning">
+          {% if metadata.evaluation_metrics %}{{ metadata.evaluation_metrics.macro_f1 }}{% else %}Pending{% endif %}
+        </div>
+        <div class="kpi-subtitle">Equal class-weight harmonic mean</div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="kpi-card">
+        <div class="kpi-indicator kpi-primary"></div>
+        <div class="kpi-title">Corpus Size</div>
+        <div class="kpi-value">{{ metadata.sample_count|default:"1,530" }}</div>
+        <div class="kpi-subtitle">{{ metadata.train_size }} train / {{ metadata.test_size }} test</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <!-- Class-Level Evaluation Metrics -->
+    <div class="col-lg-7">
+      <div class="card-cfi h-100 p-4">
+        <h5 class="fw-bold text-white mb-3">
+          <i class="bi bi-bullseye me-2 text-success"></i>Per-Class Evaluation Metrics (Held-Out Test Set)
+        </h5>
+
+        <div class="table-responsive mb-4">
+          <table class="table table-cfi align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Class Label</th>
+                <th>Precision</th>
+                <th>Recall</th>
+                <th>F1-Score</th>
+                <th>Support</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if metadata.evaluation_metrics.per_class %}
+                {% for cls_name, metrics in metadata.evaluation_metrics.per_class.items %}
+                <tr>
+                  <td>
+                    <span class="badge {% if cls_name == 'POSITIVE' %}badge-sentiment-pos{% elif cls_name == 'NEGATIVE' %}badge-sentiment-neg{% else %}badge-sentiment-neu{% endif %}">
+                      {{ cls_name }}
+                    </span>
+                  </td>
+                  <td class="font-monospace text-white">{{ metrics.precision }}</td>
+                  <td class="font-monospace text-white">{{ metrics.recall }}</td>
+                  <td class="font-monospace text-white fw-bold">{{ metrics.f1_score }}</td>
+                  <td class="text-secondary">{{ metrics.support }}</td>
+                </tr>
+                {% endfor %}
+              {% else %}
+                <tr><td colspan="5" class="text-center py-3 text-secondary">Model evaluation metrics pending.</td></tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+
+        <h6 class="fw-bold text-white mb-2"><i class="bi bi-grid-3x3 me-2 text-primary"></i>Confusion Matrix (Test Partition)</h6>
+        <div class="p-3 bg-dark rounded border border-subtle">
+          <table class="cm-table text-center small">
+            <thead>
+              <tr>
+                <th class="text-secondary">True \ Pred</th>
+                <th class="text-success">POSITIVE</th>
+                <th class="text-warning">NEUTRAL</th>
+                <th class="text-danger">NEGATIVE</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if metadata.confusion_matrix.matrix %}
+                <tr>
+                  <th class="text-success">POSITIVE</th>
+                  <td class="cm-cell cm-cell-diag">{{ metadata.confusion_matrix.matrix.0.0 }}</td>
+                  <td class="cm-cell cm-cell-off">{{ metadata.confusion_matrix.matrix.0.1 }}</td>
+                  <td class="cm-cell cm-cell-off">{{ metadata.confusion_matrix.matrix.0.2 }}</td>
+                </tr>
+                <tr>
+                  <th class="text-warning">NEUTRAL</th>
+                  <td class="cm-cell cm-cell-off">{{ metadata.confusion_matrix.matrix.1.0 }}</td>
+                  <td class="cm-cell cm-cell-diag">{{ metadata.confusion_matrix.matrix.1.1 }}</td>
+                  <td class="cm-cell cm-cell-off">{{ metadata.confusion_matrix.matrix.1.2 }}</td>
+                </tr>
+                <tr>
+                  <th class="text-danger">NEGATIVE</th>
+                  <td class="cm-cell cm-cell-off">{{ metadata.confusion_matrix.matrix.2.0 }}</td>
+                  <td class="cm-cell cm-cell-off">{{ metadata.confusion_matrix.matrix.2.1 }}</td>
+                  <td class="cm-cell cm-cell-diag">{{ metadata.confusion_matrix.matrix.2.2 }}</td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pipeline Architecture & Hyperparameters -->
+    <div class="col-lg-5">
+      <div class="card-cfi h-100 p-4">
+        <h5 class="fw-bold text-white mb-3">
+          <i class="bi bi-sliders me-2 text-warning"></i>Pipeline Architecture
+        </h5>
+
+        <div class="mb-4">
+          <label class="text-secondary small fw-bold text-uppercase d-block mb-1">Preprocessing & Vectorization</label>
+          <ul class="list-unstyled small text-secondary mb-0">
+            <li class="py-1 border-bottom border-subtle d-flex justify-content-between">
+              <span>N-gram Range</span>
+              <span class="text-white font-monospace">(1, 2) [Unigrams + Bigrams]</span>
+            </li>
+            <li class="py-1 border-bottom border-subtle d-flex justify-content-between">
+              <span>Max Feature Vocabulary</span>
+              <span class="text-white font-monospace">12,000 top n-grams</span>
+            </li>
+            <li class="py-1 border-bottom border-subtle d-flex justify-content-between">
+              <span>Sublinear TF Scaling</span>
+              <span class="text-white font-monospace">1 + log(tf)</span>
+            </li>
+            <li class="py-1 border-bottom border-subtle d-flex justify-content-between">
+              <span>Stopwords</span>
+              <span class="text-white font-monospace">English standard filtered</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="mb-4">
+          <label class="text-secondary small fw-bold text-uppercase d-block mb-1">Classifier Estimator</label>
+          <ul class="list-unstyled small text-secondary mb-0">
+            <li class="py-1 border-bottom border-subtle d-flex justify-content-between">
+              <span>Algorithm</span>
+              <span class="text-white">Multinomial Logistic Regression</span>
+            </li>
+            <li class="py-1 border-bottom border-subtle d-flex justify-content-between">
+              <span>Regularization C</span>
+              <span class="text-white font-monospace">1.0 (L2 Penalty)</span>
+            </li>
+            <li class="py-1 border-bottom border-subtle d-flex justify-content-between">
+              <span>Class Weight</span>
+              <span class="text-white font-monospace">Balanced</span>
+            </li>
+            <li class="py-1 border-bottom border-subtle d-flex justify-content-between">
+              <span>Solver / Max Iter</span>
+              <span class="text-white font-monospace">L-BFGS / 1,000 iterations</span>
+            </li>
+          </ul>
+        </div>
+
+        <div>
+          <label class="text-secondary small fw-bold text-uppercase d-block mb-1">Artifact Persistence</label>
+          <div class="p-2 rounded bg-dark border border-subtle text-secondary small font-monospace">
+            ml_artifacts/sentiment_model_{{ metadata.model_version }}.joblib
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Limitations & Considerations Card -->
+  <div class="card-cfi p-4">
+    <h5 class="fw-bold text-white mb-3">
+      <i class="bi bi-shield-exclamation me-2 text-danger"></i>Documented Limitations & Ethical Considerations
+    </h5>
+    <div class="row g-3">
+      {% for lim in metadata.known_limitations %}
+      <div class="col-md-6">
+        <div class="p-3 rounded bg-dark border border-subtle h-100">
+          <div class="d-flex align-items-start gap-2">
+            <i class="bi bi-exclamation-circle text-warning mt-1"></i>
+            <span class="text-secondary small">{{ lim }}</span>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Customer Feedback Intelligence{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <!-- Top Header Bar -->
+  <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+    <div>
+      <h2 class="fw-bold text-white mb-1">Feedback Datasets</h2>
+      <p class="text-secondary mb-0">Manage customer review collections and view real-time intelligence</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{% url 'datasets:upload_page' %}" class="btn btn-primary-cfi">
+        <i class="bi bi-cloud-arrow-up me-1"></i> Upload Dataset
+      </a>
+    </div>
+  </div>
+
+  <!-- KPI Overview Cards -->
+  <div class="row g-3 mb-4">
+    <div class="col-sm-6 col-lg-3">
+      <div class="kpi-card">
+        <div class="kpi-indicator kpi-primary"></div>
+        <div class="kpi-title">Total Datasets</div>
+        <div class="kpi-value">{{ total_datasets }}</div>
+        <div class="kpi-subtitle">Ingested collections</div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="kpi-card">
+        <div class="kpi-indicator kpi-pos"></div>
+        <div class="kpi-title">Completed</div>
+        <div class="kpi-value text-success">{{ completed_count }}</div>
+        <div class="kpi-subtitle">Ready for analysis</div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="kpi-card">
+        <div class="kpi-indicator kpi-neu"></div>
+        <div class="kpi-title">In Progress</div>
+        <div class="kpi-value text-warning">{{ processing_count }}</div>
+        <div class="kpi-subtitle">Queued or running</div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+      <div class="kpi-card">
+        <div class="kpi-indicator kpi-neg"></div>
+        <div class="kpi-title">Failed / Issues</div>
+        <div class="kpi-value text-danger">{{ failed_count }}</div>
+        <div class="kpi-subtitle">Recoverable with retry</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Datasets List Card -->
+  <div class="card-cfi">
+    <div class="card-header-cfi">
+      <span><i class="bi bi-folder2-open me-2 text-primary"></i>Your Datasets</span>
+      <span class="text-secondary small">Showing {{ datasets|length }} most recent</span>
+    </div>
+
+    {% if datasets %}
+    <div class="table-responsive">
+      <table class="table table-cfi align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Dataset Name</th>
+            <th>Status</th>
+            <th>Progress / Rows</th>
+            <th>Uploaded</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ds in datasets %}
+          <tr id="row-{{ ds.id }}">
+            <td>
+              <div class="fw-semibold text-white">{{ ds.name }}</div>
+              <div class="text-secondary small font-monospace">{{ ds.original_filename }} &bull; {{ ds.file_size_bytes|filesizeformat }}</div>
+            </td>
+            <td>
+              {% if ds.status == 'COMPLETED' %}
+                <span class="badge badge-status badge-status-completed"><i class="bi bi-check-circle me-1"></i>Completed</span>
+              {% elif ds.status == 'PROCESSING' or ds.status == 'QUEUED' %}
+                <span class="badge badge-status badge-status-processing"><i class="bi bi-arrow-repeat spin me-1"></i>{{ ds.status }}</span>
+              {% elif ds.status == 'FAILED' %}
+                <span class="badge badge-status badge-status-failed"><i class="bi bi-exclamation-triangle me-1"></i>Failed</span>
+              {% else %}
+                <span class="badge badge-status bg-secondary">{{ ds.status }}</span>
+              {% endif %}
+            </td>
+            <td style="min-width: 180px;">
+              <div class="d-flex justify-content-between align-items-center mb-1 small">
+                <span class="text-secondary">{{ ds.processed_rows }} / {{ ds.valid_rows|default:ds.total_rows }} rows</span>
+                <span class="fw-semibold">{{ ds.progress_percentage }}%</span>
+              </div>
+              <div class="progress bg-dark" style="height: 6px;">
+                <div class="progress-bar {% if ds.status == 'COMPLETED' %}bg-success{% elif ds.status == 'FAILED' %}bg-danger{% else %}bg-primary progress-bar-striped progress-bar-animated{% endif %}"
+                     role="progressbar"
+                     style="width: {{ ds.progress_percentage }}%;"
+                     aria-valuenow="{{ ds.progress_percentage }}" aria-valuemin="0" aria-valuemax="100">
+                </div>
+              </div>
+            </td>
+            <td class="text-secondary small">
+              {{ ds.created_at|date:"M d, Y" }}<br>
+              <span class="text-muted">{{ ds.created_at|time:"H:i" }} UTC</span>
+            </td>
+            <td class="text-end">
+              <div class="btn-group btn-group-sm">
+                {% if ds.status == 'COMPLETED' %}
+                <a href="{% url 'analytics:analytics_dashboard' ds.id %}" class="btn btn-primary-cfi" title="View Analytics Dashboard">
+                  <i class="bi bi-graph-up me-1"></i> Analytics
+                </a>
+                <a href="{% url 'reviews:explorer_page' ds.id %}" class="btn btn-secondary-cfi" title="Explore Reviews">
+                  <i class="bi bi-list-columns-reverse me-1"></i> Reviews
+                </a>
+                {% endif %}
+                <a href="{% url 'datasets:detail_page' ds.id %}" class="btn btn-secondary-cfi" title="View Details">
+                  <i class="bi bi-info-circle"></i>
+                </a>
+                <button onclick="confirmDelete('{{ ds.id }}', '{{ ds.name|escapejs }}')" class="btn btn-outline-danger-cfi" title="Delete Dataset">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="text-center py-5">
+      <div class="d-inline-flex p-4 rounded-circle bg-dark border border-subtle mb-3 text-secondary">
+        <i class="bi bi-file-earmark-arrow-up fs-1"></i>
+      </div>
+      <h5 class="fw-bold text-white mb-2">No datasets uploaded yet</h5>
+      <p class="text-secondary small mb-4" style="max-width: 420px; margin: 0 auto;">
+        Upload a customer review CSV to automatically classify sentiment, calculate satisfaction trends, and extract key issues.
+      </p>
+      <a href="{% url 'datasets:upload_page' %}" class="btn btn-primary-cfi px-4">
+        <i class="bi bi-cloud-arrow-up me-1"></i> Upload Your First CSV
+      </a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content card-cfi">
+      <div class="modal-header border-subtle">
+        <h5 class="modal-title text-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>Delete Dataset</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-secondary">Are you sure you want to permanently delete <strong id="deleteTargetName" class="text-white"></strong>?</p>
+        <p class="text-muted small mb-0">This will delete all raw reviews, ML sentiment predictions, cached analytics, and the stored CSV file. This action cannot be undone.</p>
+      </div>
+      <div class="modal-footer border-subtle">
+        <button type="button" class="btn btn-secondary-cfi" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="confirmDeleteBtn" class="btn btn-danger">Delete Permanently</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let deleteDatasetId = null;
+const deleteModal = new bootstrap.Modal(document.getElementById('deleteModal'));
+
+function confirmDelete(datasetId, datasetName) {
+  deleteDatasetId = datasetId;
+  document.getElementById('deleteTargetName').textContent = datasetName;
+  deleteModal.show();
+}
+
+document.getElementById('confirmDeleteBtn').addEventListener('click', async function() {
+  if (!deleteDatasetId) return;
+  this.disabled = true;
+  this.textContent = 'Deleting...';
+
+  try {
+    await apiFetch(`/api/datasets/${deleteDatasetId}/`, { method: 'DELETE' });
+    deleteModal.hide();
+    const row = document.getElementById(`row-${deleteDatasetId}`);
+    if (row) row.remove();
+    else window.location.reload();
+  } catch (err) {
+    alert(err.message || 'Failed to delete dataset.');
+  } finally {
+    this.disabled = false;
+    this.textContent = 'Delete Permanently';
+  }
+});
+</script>
+{% endblock %}

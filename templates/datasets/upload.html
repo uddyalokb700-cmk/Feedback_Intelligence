@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+
+{% block title %}Upload CSV Dataset - Customer Feedback Intelligence{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <div class="row justify-content-center">
+    <div class="col-lg-8">
+      <!-- Breadcrumb -->
+      <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb small">
+          <li class="breadcrumb-item"><a href="{% url 'datasets:dashboard' %}" class="text-secondary text-decoration-none">Dashboard</a></li>
+          <li class="breadcrumb-item active text-white" aria-current="page">Upload Dataset</li>
+        </ol>
+      </nav>
+
+      <div class="card-cfi p-4 p-md-5 mb-4">
+        <div class="d-flex align-items-center gap-3 mb-4">
+          <div class="d-inline-flex align-items-center justify-content-center bg-primary bg-opacity-10 text-primary rounded-circle" style="width: 48px; height: 48px;">
+            <i class="bi bi-cloud-arrow-up-fill fs-4"></i>
+          </div>
+          <div>
+            <h3 class="fw-bold text-white mb-0">Upload Review Dataset</h3>
+            <p class="text-secondary small mb-0">Ingest CSV feedback data for ML sentiment classification</p>
+          </div>
+        </div>
+
+        <!-- Alert feedback -->
+        <div id="uploadAlert" class="alert alert-danger d-none border-0 small" role="alert"></div>
+
+        <!-- Ingestion Status Box (Shown during/after processing) -->
+        <div id="processingCard" class="card-cfi p-4 mb-4 d-none bg-dark border-primary">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span id="processingStatusText" class="fw-semibold text-white">
+              <i class="bi bi-gear-fill spin me-2 text-primary"></i>Processing Dataset...
+            </span>
+            <span id="progressPercentage" class="fw-bold text-primary">0%</span>
+          </div>
+
+          <div class="progress bg-secondary bg-opacity-25 mb-3" style="height: 10px;">
+            <div id="progressBar" class="progress-bar bg-primary progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+          </div>
+
+          <div class="d-flex justify-content-between small text-secondary">
+            <span id="rowsProcessedText">Processed: 0 rows</span>
+            <span id="processingTimeText">Status: Running</span>
+          </div>
+
+          <!-- Success Actions (Shown when completed) -->
+          <div id="successActions" class="mt-4 pt-3 border-top border-subtle d-none">
+            <div class="alert alert-success bg-success bg-opacity-10 text-success border-success border-opacity-25 small mb-3">
+              <i class="bi bi-check-circle-fill me-2"></i>Dataset successfully analyzed and ready!
+            </div>
+            <div class="d-flex gap-2">
+              <a id="viewAnalyticsBtn" href="#" class="btn btn-primary-cfi">
+                <i class="bi bi-graph-up me-1"></i> View Analytics Dashboard
+              </a>
+              <a id="viewReviewsBtn" href="#" class="btn btn-secondary-cfi">
+                <i class="bi bi-list-columns-reverse me-1"></i> Explore Reviews
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Upload Form -->
+        <form id="uploadForm">
+          {% csrf_token %}
+          <div class="mb-4">
+            <label for="datasetNameInput" class="form-label text-secondary small fw-medium">Dataset Name (Optional)</label>
+            <input type="text" class="form-control form-control-cfi" id="datasetNameInput" name="name" placeholder="e.g. Q3 Customer Satisfaction Feedback">
+            <div class="form-text text-muted small">If left blank, the uploaded filename will be used.</div>
+          </div>
+
+          <div class="mb-4">
+            <label class="form-label text-secondary small fw-medium">CSV File Selection</label>
+            <div id="dropzone" class="dropzone-cfi">
+              <i class="bi bi-file-earmark-spreadsheet fs-1 text-primary mb-2 d-block"></i>
+              <div class="fw-semibold text-white mb-1">Drag and drop your CSV file here</div>
+              <div class="text-secondary small mb-3">Maximum file size: 25 MB (.csv format)</div>
+              <label for="fileInput" class="btn btn-secondary-cfi btn-sm px-3 cursor-pointer">
+                <i class="bi bi-folder2-open me-1"></i> Browse Computer
+              </label>
+              <input type="file" id="fileInput" name="file" accept=".csv" class="d-none" required>
+            </div>
+            <div id="selectedFileInfo" class="mt-2 text-primary small fw-medium d-none">
+              <i class="bi bi-check-circle me-1"></i> Selected: <span id="fileNameDisplay"></span>
+            </div>
+          </div>
+
+          <button type="submit" id="submitUploadBtn" class="btn btn-primary-cfi w-100 py-2">
+            <i class="bi bi-cloud-arrow-up me-1"></i> Upload and Analyze Dataset
+          </button>
+        </form>
+      </div>
+
+      <!-- CSV Format Specification Guide -->
+      <div class="card-cfi p-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="fw-bold text-white mb-0">Supported CSV Schema</h5>
+          <button type="button" id="downloadSampleCsvBtn" class="btn btn-secondary-cfi btn-sm">
+            <i class="bi bi-download me-1"></i> Download Sample CSV
+          </button>
+        </div>
+
+        <p class="text-secondary small mb-3">
+          The ingestion engine matches columns using header synonyms (e.g. <code>review</code>, <code>comment</code>, <code>feedback</code>, <code>text</code>). Only <strong>review_text</strong> is required.
+        </p>
+
+        <div class="table-responsive">
+          <table class="table table-cfi table-sm small mb-0">
+            <thead>
+              <tr>
+                <th>Column</th>
+                <th>Requirement</th>
+                <th>Supported Synonyms</th>
+                <th>Example</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="text-white fw-bold">review_text</td>
+                <td><span class="badge bg-danger">Required</span></td>
+                <td><code>review</code>, <code>feedback</code>, <code>comment</code>, <code>text</code></td>
+                <td>"Great quality and battery life!"</td>
+              </tr>
+              <tr>
+                <td class="text-white">review_id</td>
+                <td><span class="badge bg-secondary">Optional</span></td>
+                <td><code>id</code>, <code>external_id</code>, <code>feedback_id</code></td>
+                <td>R1001</td>
+              </tr>
+              <tr>
+                <td class="text-white">rating</td>
+                <td><span class="badge bg-secondary">Optional</span></td>
+                <td><code>score</code>, <code>stars</code>, <code>star_rating</code></td>
+                <td>5 or 4.5</td>
+              </tr>
+              <tr>
+                <td class="text-white">review_date</td>
+                <td><span class="badge bg-secondary">Optional</span></td>
+                <td><code>date</code>, <code>timestamp</code>, <code>created_at</code></td>
+                <td>2026-09-15</td>
+              </tr>
+              <tr>
+                <td class="text-white">product_category</td>
+                <td><span class="badge bg-secondary">Optional</span></td>
+                <td><code>category</code>, <code>dept</code>, <code>product</code></td>
+                <td>Electronics</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const fileInput = document.getElementById('fileInput');
+const dropzone = document.getElementById('dropzone');
+const selectedFileInfo = document.getElementById('selectedFileInfo');
+const fileNameDisplay = document.getElementById('fileNameDisplay');
+const uploadForm = document.getElementById('uploadForm');
+const uploadAlert = document.getElementById('uploadAlert');
+const processingCard = document.getElementById('processingCard');
+const progressBar = document.getElementById('progressBar');
+const progressPercentage = document.getElementById('progressPercentage');
+const rowsProcessedText = document.getElementById('rowsProcessedText');
+const processingStatusText = document.getElementById('processingStatusText');
+const successActions = document.getElementById('successActions');
+const submitUploadBtn = document.getElementById('submitUploadBtn');
+
+// File drag & drop handlers
+dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) {
+    fileInput.files = e.dataTransfer.files;
+    handleFileSelected();
+  }
+});
+
+fileInput.addEventListener('change', handleFileSelected);
+
+function handleFileSelected() {
+  if (fileInput.files.length > 0) {
+    const f = fileInput.files[0];
+    if (!f.name.toLowerCase().endsWith('.csv')) {
+      alert('Only .csv files are supported.');
+      fileInput.value = '';
+      selectedFileInfo.classList.add('d-none');
+      return;
+    }
+    if (f.size > 25 * 1024 * 1024) {
+      alert('File size exceeds 25 MB limit.');
+      fileInput.value = '';
+      selectedFileInfo.classList.add('d-none');
+      return;
+    }
+    fileNameDisplay.textContent = `${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
+    selectedFileInfo.classList.remove('d-none');
+  }
+}
+
+// Upload Submission
+uploadForm.addEventListener('submit', async function(e) {
+  e.preventDefault();
+  uploadAlert.classList.add('d-none');
+
+  if (!fileInput.files.length) {
+    uploadAlert.textContent = 'Please choose a CSV file to upload.';
+    uploadAlert.classList.remove('d-none');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+  const customName = document.getElementById('datasetNameInput').value.trim();
+  if (customName) formData.append('name', customName);
+
+  submitUploadBtn.disabled = true;
+  submitUploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Uploading...';
+
+  try {
+    const res = await apiFetch('/api/datasets/', {
+      method: 'POST',
+      body: formData
+    });
+
+    // Show progress card and start polling
+    uploadForm.classList.add('d-none');
+    processingCard.classList.remove('d-none');
+    pollStatus(res.dataset_id);
+
+  } catch (err) {
+    uploadAlert.textContent = err.message || 'Upload failed.';
+    uploadAlert.classList.remove('d-none');
+    submitUploadBtn.disabled = false;
+    submitUploadBtn.innerHTML = '<i class="bi bi-cloud-arrow-up me-1"></i> Upload and Analyze Dataset';
+  }
+});
+
+function pollStatus(datasetId) {
+  const pollInterval = setInterval(async () => {
+    try {
+      const data = await apiFetch(`/api/datasets/${datasetId}/status/`);
+      const pct = data.progress_percentage || 0;
+      progressBar.style.width = pct + '%';
+      progressPercentage.textContent = pct + '%';
+      rowsProcessedText.textContent = `Processed: ${data.processed_rows} rows`;
+
+      if (data.status === 'COMPLETED') {
+        clearInterval(pollInterval);
+        progressBar.style.width = '100%';
+        progressBar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+        progressBar.classList.add('bg-success');
+        progressPercentage.textContent = '100%';
+        processingStatusText.innerHTML = '<i class="bi bi-check-circle-fill text-success me-2"></i>Analysis Complete!';
+        document.getElementById('viewAnalyticsBtn').href = `/datasets/${datasetId}/analytics/`;
+        document.getElementById('viewReviewsBtn').href = `/datasets/${datasetId}/reviews/`;
+        successActions.classList.remove('d-none');
+      } else if (data.status === 'FAILED') {
+        clearInterval(pollInterval);
+        progressBar.classList.add('bg-danger');
+        processingStatusText.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>Processing Failed';
+        uploadAlert.textContent = data.error_summary || 'Dataset processing encountered an error.';
+        uploadAlert.classList.remove('d-none');
+      }
+    } catch (err) {
+      console.error('Status poll error:', err);
+    }
+  }, 1200);
+}
+
+// Download Sample CSV Helper
+document.getElementById('downloadSampleCsvBtn').addEventListener('click', function() {
+  const sample = `review_id,review_text,rating,review_date,product_category
+R1001,"The build quality is exceptional and the sound is crystal clear.",5,2026-09-10,Electronics
+R1002,"Delivery was late by four days and support was unhelpful.",2,2026-09-11,Logistics
+R1003,"The item functions as described. Average performance.",3,2026-09-12,Home
+R1004,"Super intuitive app and brilliant user interface!",5,2026-09-13,Software
+R1005,"Horrible customer service. Defective unit arrived broken.",1,2026-09-14,Electronics
+R1006,"Comfortable fit and pleasant fabric. Good value for money.",4,2026-09-15,Apparel`;
+
+  const blob = new Blob([sample], { type: 'text/csv' });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.setAttribute('href', url);
+  a.setAttribute('download', 'sample_feedback_cfi.csv');
+  a.click();
+});
+</script>
+{% endblock %}
