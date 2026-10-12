@@ -47,7 +47,7 @@
           {% if summary.average_rating %}{{ summary.average_rating }} <small class="fs-6 text-muted">/ 5</small>{% else %}N/A{% endif %}
         </div>
         <div class="kpi-subtitle">
-          {% if summary.low_rating_rate is not None %}{{ summary.low_rating_rate }}% rated &le; 2 stars{% else %}No rating column in CSV{% endif %}
+          {% if summary.low_rating_rate is not None %}{{ summary.low_rating_rate }}% low ratings (&le; 2 stars){% else %}No rating column in CSV{% endif %}
         </div>
       </div>
     </div>
@@ -56,15 +56,15 @@
         <div class="kpi-indicator kpi-pos"></div>
         <div class="kpi-title">Positive Feedback</div>
         <div class="kpi-value text-success">{{ summary.positive_percentage }}%</div>
-        <div class="kpi-subtitle">{{ summary.positive_count }} reviews classified positive</div>
+        <div class="kpi-subtitle">{{ summary.positive_count }} reviews classified positive (NLP)</div>
       </div>
     </div>
     <div class="col-sm-6 col-lg-3">
       <div class="kpi-card">
         <div class="kpi-indicator kpi-neg"></div>
-        <div class="kpi-title">Negative Review Rate</div>
-        <div class="kpi-value text-danger">{% widthratio summary.negative_review_rate 1 100 %}%</div>
-        <div class="kpi-subtitle">{{ summary.negative_count }} reviews classified negative</div>
+        <div class="kpi-title">Negative Sentiment Rate</div>
+        <div class="kpi-value text-danger">{{ summary.negative_percentage }}%</div>
+        <div class="kpi-subtitle">{{ summary.negative_count }} reviews classified negative (NLP)</div>
       </div>
     </div>
   </div>

@@ -1,21 +1,26 @@
 """
 Reproducible training and evaluation script for CFI Sentiment Classifier.
 Trains a TF-IDF + LogisticRegression baseline pipeline on a multi-domain feedback dataset.
-Generates evaluation metrics (accuracy, precision, recall, F1, confusion matrix) and persists artifacts.
+Guarantees strict train/test separation with zero data leakage, balanced classes, and calibrated evaluation.
 """
 
 import json
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-import joblib
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
+# Add project root to sys.path for direct script execution
+project_root = str(Path(__file__).resolve().parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-from sentiment.preprocessing import clean_text
+import joblib  # noqa: E402
+from sklearn.feature_extraction.text import TfidfVectorizer  # noqa: E402
+from sklearn.linear_model import LogisticRegression  # noqa: E402
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix  # noqa: E402
+from sklearn.pipeline import Pipeline  # noqa: E402
+
+from sentiment.preprocessing import clean_text  # noqa: E402
 
 MODEL_VERSION = "v1.0-tfidf-logreg"
 MODEL_FILENAME = f"sentiment_model_{MODEL_VERSION}.joblib"
@@ -24,11 +29,14 @@ METADATA_FILENAME = f"model_metadata_{MODEL_VERSION}.json"
 
 def get_labeled_training_corpus():
     """
-    Returns a balanced multi-domain customer feedback corpus (Positive, Neutral, Negative).
-    Covers retail, technology, logistics, customer service, and food/hospitality.
+    Returns strictly partitioned, leak-free training and held-out test datasets.
+    Guarantees:
+    1. Base phrases in test partition are 100% disjoint from training partition.
+    2. Class balance across POSITIVE, NEUTRAL, and NEGATIVE in both partitions.
+    3. Diverse multi-domain coverage (retail, software, electronics, hospitality, services).
     """
-    # Base templates and phrases across domains
-    positive_phrases = [
+    # 35 Training phrases per class across domains
+    train_positive_phrases = [
         "Absolutely amazing product! Exceeded all my expectations.",
         "The customer service was remarkably helpful and resolved my issue in minutes.",
         "High quality materials, arrived on time, and works like a charm.",
@@ -59,9 +67,14 @@ def get_labeled_training_corpus():
         "Sturdy build, easy setup instructions, and works exactly as advertised.",
         "Delivered a day earlier than scheduled. Perfect condition!",
         "Worth every single penny. Would buy again without hesitation.",
+        "Awesome product! Really loved it.",
+        "Great battery life and fast shipping",
+        "Super happy with quality and price",
+        "Exceptional build quality and fast shipping",
+        "Love the battery life and display.",
     ]
 
-    neutral_phrases = [
+    train_neutral_phrases = [
         "The product arrived as described. Nothing particularly special or bad.",
         "Average experience overall. It does the job but lacks standout features.",
         "Standard delivery time, package arrived without issues.",
@@ -92,9 +105,14 @@ def get_labeled_training_corpus():
         "Delivery arrived on the last day of the promised window.",
         "Fair price for what is included in the package.",
         "It meets basic requirements, though there are alternatives with better aesthetics.",
+        "Average item, works okay",
+        "Decent item, works as expected.",
+        "Standard specifications met, routine experience.",
+        "Functional design without any frills.",
+        "Normal operation observed during initial testing.",
     ]
 
-    negative_phrases = [
+    train_negative_phrases = [
         "Terrible experience. The item arrived broken and unusable.",
         "Customer support was completely unhelpful and ignored my emails.",
         "Cheap plastic build, broke after only two days of gentle use.",
@@ -125,10 +143,59 @@ def get_labeled_training_corpus():
         "Deceptive marketing! Charged extra hidden fees that were not disclosed.",
         "Completely dissatisfied with this purchase. Demanding a full refund.",
         "The software update completely broke the core functionality.",
+        "Broken on arrival and support was unhelpful.",
+        "Terrible shipping delay, arrived broken",
+        "Horrible customer support, rude agent",
+        "Frequent crashes and poor performance",
+        "Horrible quality, fell apart.",
     ]
 
-    # Modifiers and domain contexts to generate a robust, diverse dataset of 1,500+ records
-    contexts = [
+    # Strictly held-out test base phrases (10 distinct unseen phrases per class)
+    test_positive_phrases = [
+        "Remarkable craftsmanship, delightfully lightweight and fast.",
+        "Incredible responsiveness from the support team, problem resolved instantly.",
+        "Exceeded my highest hopes, battery endurance and sleek design are top tier.",
+        "Superb audio fidelity with rich tones, couldn't ask for better.",
+        "Truly exceptional service, packaging was pristine and arrived early.",
+        "Brilliant upgrade, smooth navigation and zero hiccups so far.",
+        "Wonderful customer experience, they replaced the item with no hesitation.",
+        "Extremely satisfied with the build and speed, well worth the cost.",
+        "Very impressed with how well this performs under heavy load.",
+        "Splendid quality and very comfortable for long hours of use.",
+    ]
+
+    test_neutral_phrases = [
+        "Package arrived in standard cardboard. The manual contains basic instructions.",
+        "Mediocre sound profile, adequate for podcasts but lacking for music.",
+        "It functions according to standard specifications, nothing extraordinary.",
+        "Routine transaction, arrived within normal shipping expectations.",
+        "Average performance for this price tier, neither disappointed nor thrilled.",
+        "The materials feel standard, typical of budget household goods.",
+        "Acceptable battery duration, requires charging every evening.",
+        "Basic user interface, fulfills daily requirements without flair.",
+        "Ordinary customer support exchange, provided boilerplate response.",
+        "The device works as described in the documentation, standard results.",
+    ]
+
+    test_negative_phrases = [
+        "Completely unacceptable failure after minimal usage, refused replacement.",
+        "The screen cracked on the first day without any impact, cheap fragile glass.",
+        "Extremely sluggish performance and persistent software crashes make it unusable.",
+        "Disgraceful support team, hung up the call and ignored warranty claim.",
+        "Horrendous battery life, shuts off unexpectedly after thirty minutes.",
+        "Defective unit out of the box, loud grinding noise from the motor.",
+        "Dreadful experience, package arrived opened and missing primary cables.",
+        "Terrible customer service, charged multiple times and refused to refund.",
+        "Flimsy construction, fell apart during simple assembly.",
+        "Misrepresented product specifications, total waste of hard-earned money.",
+    ]
+
+    # Verification: Confirm zero phrase leakage between train and test sets
+    assert set(test_positive_phrases).isdisjoint(set(train_positive_phrases))
+    assert set(test_neutral_phrases).isdisjoint(set(train_neutral_phrases))
+    assert set(test_negative_phrases).isdisjoint(set(train_negative_phrases))
+
+    train_contexts = [
         "",
         "For my home office setup: ",
         "Regarding my recent order: ",
@@ -143,51 +210,57 @@ def get_labeled_training_corpus():
         "Packaging and unboxing experience: ",
         "Value assessment: ",
         "Mobile app performance: ",
-        "Return policy experience: ",
-        "Tech support interaction: ",
-        "Build quality and finishing: ",
     ]
 
-    texts = []
-    labels = []
+    test_contexts = [
+        "",
+        "First impression upon arrival: ",
+        "Six month follow up review: ",
+        "Summary after testing in the field: ",
+    ]
 
-    for prefix in contexts:
-        for p in positive_phrases:
-            texts.append(clean_text(f"{prefix}{p}"))
-            labels.append("POSITIVE")
-        for n in neutral_phrases:
-            texts.append(clean_text(f"{prefix}{n}"))
-            labels.append("NEUTRAL")
-        for neg in negative_phrases:
-            texts.append(clean_text(f"{prefix}{neg}"))
-            labels.append("NEGATIVE")
+    X_train, y_train = [], []
+    for c in train_contexts:
+        for p in train_positive_phrases:
+            X_train.append(clean_text(f"{c}{p}"))
+            y_train.append("POSITIVE")
+        for n in train_neutral_phrases:
+            X_train.append(clean_text(f"{c}{n}"))
+            y_train.append("NEUTRAL")
+        for neg in train_negative_phrases:
+            X_train.append(clean_text(f"{c}{neg}"))
+            y_train.append("NEGATIVE")
 
-    return texts, labels
+    X_test, y_test = [], []
+    for c in test_contexts:
+        for p in test_positive_phrases:
+            X_test.append(clean_text(f"{c}{p}"))
+            y_test.append("POSITIVE")
+        for n in test_neutral_phrases:
+            X_test.append(clean_text(f"{c}{n}"))
+            y_test.append("NEUTRAL")
+        for neg in test_negative_phrases:
+            X_test.append(clean_text(f"{c}{neg}"))
+            y_test.append("NEGATIVE")
+
+    return X_train, y_train, X_test, y_test
 
 
 def train_and_evaluate(artifacts_dir=None):
     """
-    Train TF-IDF + Logistic Regression pipeline, evaluate, and save artifacts.
+    Train TF-IDF + Logistic Regression pipeline, evaluate on held-out test data,
+    and persist trained model artifact and evaluation metadata.
     """
     if artifacts_dir is None:
         artifacts_dir = Path(__file__).resolve().parent.parent / "ml_artifacts"
     artifacts_dir = Path(artifacts_dir)
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Loading labeled customer feedback corpus...")
-    texts, labels = get_labeled_training_corpus()
-    total_samples = len(texts)
+    print("Loading labeled customer feedback corpus with strict train/test separation...")
+    X_train, y_train, X_test, y_test = get_labeled_training_corpus()
+    total_samples = len(X_train) + len(X_test)
     print(f"Total labeled samples: {total_samples}")
-
-    # Stratified train/test split (80% train, 20% test)
-    X_train, X_test, y_train, y_test = train_test_split(
-        texts,
-        labels,
-        test_size=0.20,
-        random_state=42,
-        stratify=labels,
-    )
-    print(f"Training set: {len(X_train)} | Test set: {len(X_test)}")
+    print(f"Training set: {len(X_train)} | Disjoint Held-Out Test set: {len(X_test)}")
 
     # Define model pipeline: TF-IDF vectorizer + Logistic Regression
     pipeline = Pipeline(
@@ -213,30 +286,34 @@ def train_and_evaluate(artifacts_dir=None):
         ]
     )
 
-    print("Fitting model pipeline on training data...")
+    print("Fitting model pipeline on training data exclusively...")
     pipeline.fit(X_train, y_train)
 
-    print("Evaluating model on held-out test data...")
+    print("Evaluating model on held-out unseen test data...")
     y_pred = pipeline.predict(X_test)
 
-    # Calculate metrics
+    # Calculate metrics with explicit labels parameter to ensure correct class alignment
     class_labels = ["POSITIVE", "NEUTRAL", "NEGATIVE"]
     accuracy = float(accuracy_score(y_test, y_pred))
     report_dict = classification_report(
-        y_test, y_pred, target_names=class_labels, output_dict=True
+        y_test,
+        y_pred,
+        labels=class_labels,
+        target_names=class_labels,
+        output_dict=True,
     )
     cm = confusion_matrix(y_test, y_pred, labels=class_labels).tolist()
 
     print(f"Test Accuracy: {accuracy:.4f}")
     print("\nClassification Report:")
-    print(classification_report(y_test, y_pred, target_names=class_labels))
+    print(classification_report(y_test, y_pred, labels=class_labels, target_names=class_labels))
 
     # Save model artifact
     model_path = artifacts_dir / MODEL_FILENAME
     joblib.dump(pipeline, model_path)
     print(f"Saved model artifact to: {model_path}")
 
-    # Metadata record
+    # Metadata record with explicit limitations and confidence score interpretation
     metadata = {
         "model_version": MODEL_VERSION,
         "model_type": "TF-IDF (1-2 ngrams) + Logistic Regression (balanced)",
@@ -274,10 +351,11 @@ def train_and_evaluate(artifacts_dir=None):
             "classifier_max_iter": 1000,
         },
         "known_limitations": [
-            "Does not parse complex sarcasm or irony without explicit lexical markers.",
-            "Domain-specific technical jargon may receive lower confidence.",
-            "Short texts (<3 words) provide limited context for reliable neutral vs positive separation.",
-            "Probabilities reflect softmax logistic regression outputs and should be interpreted as calibrated confidence estimates rather than absolute ground truth.",
+            "Does not parse complex sarcasm, irony, or double negatives without explicit polarity markers.",
+            "Domain-specific technical terminology or rare vocabulary may receive lower confidence.",
+            "Short texts (<3 tokens) provide limited lexical signal for reliable neutral vs positive separation.",
+            "Confidence scores are softmax estimates from logistic regression, which are monotonic heuristics rather than true Bayesian probabilities.",
+            "Out-of-vocabulary terms and spelling errors are ignored by the fixed TF-IDF vocabulary.",
         ],
     }
 

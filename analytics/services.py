@@ -76,6 +76,7 @@ def get_summary_metrics(dataset: Dataset, use_cache: bool = True) -> dict:
             "neutral_percentage": 0.0,
             "negative_percentage": 0.0,
             "negative_review_rate": 0.0,
+            "negative_sentiment_rate": 0.0,
             "low_rating_rate": None,
             "rating_distribution": {},
         }
@@ -130,6 +131,7 @@ def get_summary_metrics(dataset: Dataset, use_cache: bool = True) -> dict:
         "neutral_percentage": neu_pct,
         "negative_percentage": neg_pct,
         "negative_review_rate": neg_rate,
+        "negative_sentiment_rate": neg_rate,
         "low_rating_rate": low_rate,
         "rating_distribution": rating_dist,
     }
