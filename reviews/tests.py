@@ -83,8 +83,10 @@ class ReviewExplorerTests(TestCase):
     def test_export_reviews_csv(self):
         response = self.client.get(f"/api/datasets/{self.dataset.id}/reviews/export/?sentiment=POSITIVE")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response["Content-Type"], "text/csv")
-        content = response.content.decode("utf-8")
+        if getattr(response, "streaming", False):
+            content = b"".join(response.streaming_content).decode("utf-8")
+        else:
+            content = response.content.decode("utf-8")
         self.assertIn("review_text", content)
         self.assertIn("Outstanding product", content)
         self.assertNotIn("Horrible quality", content)

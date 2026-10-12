@@ -5,6 +5,7 @@ Data ingestion, CSV validation, and bounded chunk processing service.
 import csv
 import logging
 import os
+import sys
 from datetime import date
 
 from dateutil import parser as date_parser
@@ -12,11 +13,19 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from analytics.services import clear_dataset_analytics_cache
 from datasets.models import Dataset, DatasetStatus, JobStatus, ProcessingJob
 from reviews.models import Review, SentimentResult
 from sentiment.inference import predict_batch
 
 logger = logging.getLogger("datasets")
+
+# Safely increase CSV field size limit (bounded to 10MB) to handle legitimate reviews
+max_csv_limit = min(sys.maxsize, 10 * 1024 * 1024)
+try:
+    csv.field_size_limit(max_csv_limit)
+except (OverflowError, TypeError):
+    pass
 
 # Canonical column name aliases
 HEADER_SYNONYMS = {
@@ -63,6 +72,19 @@ def map_headers(fieldnames: list[str]) -> dict:
     return mapping
 
 
+def detect_delimiter(file_path: str) -> str:
+    """Safely detect CSV delimiter (comma, tab, semicolon, pipe)."""
+    try:
+        with open(file_path, "r", encoding="utf-8-sig", errors="replace") as f:
+            sample = f.read(8192)
+            if not sample:
+                return ","
+            dialect = csv.Sniffer().sniff(sample, delimiters=",\t;|")
+            return dialect.delimiter
+    except Exception:
+        return ","
+
+
 def validate_csv_structure(file_path: str) -> dict:
     """
     Inspect the CSV headers and validate basic structure.
@@ -77,12 +99,16 @@ def validate_csv_structure(file_path: str) -> dict:
 
     max_size = getattr(settings, "MAX_UPLOAD_SIZE_BYTES", 25 * 1024 * 1024)
     if file_size > max_size:
-        raise ValueError(f"File size ({file_size / (1024*1024):.1f} MB) exceeds maximum allowed limit of {max_size / (1024*1024):.0f} MB.")
+        raise ValueError(
+            f"File size ({file_size / (1024*1024):.1f} MB) exceeds maximum allowed limit of {max_size / (1024*1024):.0f} MB."
+        )
+
+    delimiter = detect_delimiter(file_path)
 
     # Detect encoding and read header
     try:
         with open(file_path, "r", encoding="utf-8-sig", errors="replace") as f:
-            reader = csv.reader(f)
+            reader = csv.reader(f, delimiter=delimiter)
             header_row = next(reader, None)
     except Exception as e:
         raise ValueError(f"Could not read CSV file: {e!s}") from e
@@ -103,6 +129,7 @@ def validate_csv_structure(file_path: str) -> dict:
         "header_row": header_row,
         "mapping": mapping,
         "file_size": file_size,
+        "delimiter": delimiter,
     }
 
 
@@ -133,38 +160,63 @@ def parse_date(val) -> date | None:
 def run_dataset_ingestion(dataset_id: str, job_id: str = None) -> bool:
     """
     Execute full bounded chunk ingestion and sentiment classification for a dataset.
-    Idempotent and transactionally bounded.
+    Idempotent and transactionally bounded with row-level concurrency locking.
     """
-    dataset = Dataset.objects.get(id=dataset_id)
-    job = None
-    if job_id:
-        job = ProcessingJob.objects.filter(id=job_id).first()
+    now = timezone.now()
+
+    # 1. Row-level concurrency lock: prevent concurrent duplicate execution
+    with transaction.atomic():
+        try:
+            dataset = Dataset.objects.select_for_update().get(id=dataset_id)
+        except Dataset.DoesNotExist:
+            logger.error("Dataset %s does not exist.", dataset_id)
+            return False
+
+        job = None
+        if job_id:
+            job = ProcessingJob.objects.filter(id=job_id).first()
+        if not job:
+            job = dataset.processing_jobs.filter(
+                status__in=[JobStatus.PENDING, JobStatus.RUNNING]
+            ).first()
+
+        # Prevent duplicate processing if another worker is already actively processing
+        if dataset.status == DatasetStatus.PROCESSING:
+            logger.warning(
+                "Dataset %s is already being processed by another worker. Aborting duplicate execution.",
+                dataset_id,
+            )
+            if job and job.status == JobStatus.PENDING:
+                job.status = JobStatus.CANCELLED
+                job.safe_error_message = "Cancelled duplicate processing task."
+                job.save(update_fields=["status", "safe_error_message"])
+            return False
+
+        dataset.status = DatasetStatus.PROCESSING
+        dataset.started_at = now
+        dataset.save(update_fields=["status", "started_at"])
+
+        if job:
+            job.status = JobStatus.RUNNING
+            job.started_at = now
+            job.save(update_fields=["status", "started_at"])
 
     logger.info("Starting processing for Dataset %s (Job %s)", dataset_id, job_id)
-
-    # Update states
-    now = timezone.now()
-    dataset.status = DatasetStatus.PROCESSING
-    dataset.started_at = now
-    dataset.save(update_fields=["status", "started_at"])
-
-    if job:
-        job.status = JobStatus.RUNNING
-        job.started_at = now
-        job.save(update_fields=["status", "started_at"])
 
     try:
         file_path = dataset.file.path
         csv_info = validate_csv_structure(file_path)
         mapping = csv_info["mapping"]
+        delimiter = csv_info.get("delimiter", ",")
 
-        # Clear existing reviews if this is a retry to prevent duplicates
+        # Reset any existing reviews on retry to guarantee idempotency and no duplicates
         with transaction.atomic():
             dataset.reviews.all().delete()
             dataset.processed_rows = 0
             dataset.valid_rows = 0
             dataset.invalid_rows = 0
             dataset.save(update_fields=["processed_rows", "valid_rows", "invalid_rows"])
+            clear_dataset_analytics_cache(str(dataset.id), dataset.completed_at)
 
         text_col = mapping["review_text"]
         id_col = mapping.get("external_review_id")
@@ -173,6 +225,7 @@ def run_dataset_ingestion(dataset_id: str, job_id: str = None) -> bool:
         cat_col = mapping.get("product_category")
 
         batch_size = getattr(settings, "INGESTION_BATCH_SIZE", 1000)
+        max_rows = getattr(settings, "MAX_CSV_ROWS", 100000)
         seen_external_ids = set()
 
         total_rows_count = 0
@@ -183,10 +236,14 @@ def run_dataset_ingestion(dataset_id: str, job_id: str = None) -> bool:
         batch_reviews = []
 
         with open(file_path, "r", encoding="utf-8-sig", errors="replace") as f:
-            reader = csv.DictReader(f)
+            reader = csv.DictReader(f, delimiter=delimiter)
 
             for line_idx, row in enumerate(reader, start=2):
                 total_rows_count += 1
+                if total_rows_count > max_rows:
+                    raise ValueError(
+                        f"CSV row count exceeds maximum allowed limit of {max_rows:,} rows."
+                    )
 
                 raw_text = row.get(text_col, "")
                 if not raw_text or not raw_text.strip():
@@ -232,12 +289,12 @@ def run_dataset_ingestion(dataset_id: str, job_id: str = None) -> bool:
 
                 # Process batch when threshold is reached
                 if len(batch_reviews) >= batch_size:
-                    _process_review_batch(dataset, job, batch_reviews)
+                    _process_review_batch(dataset, job, batch_reviews, valid_rows_count)
                     batch_reviews = []
 
             # Flush remaining batch
             if batch_reviews:
-                _process_review_batch(dataset, job, batch_reviews)
+                _process_review_batch(dataset, job, batch_reviews, valid_rows_count)
                 batch_reviews = []
 
         # Finalize dataset metadata and completion
@@ -250,6 +307,7 @@ def run_dataset_ingestion(dataset_id: str, job_id: str = None) -> bool:
         dataset.completed_at = completion_time
         dataset.validation_report = {
             "mapped_columns": mapping,
+            "delimiter": delimiter,
             "total_rows": total_rows_count,
             "valid_rows": valid_rows_count,
             "invalid_rows": invalid_rows_count,
@@ -264,6 +322,8 @@ def run_dataset_ingestion(dataset_id: str, job_id: str = None) -> bool:
             job.completed_at = completion_time
             job.save()
 
+        clear_dataset_analytics_cache(str(dataset.id), completion_time)
+
         logger.info(
             "Successfully completed processing Dataset %s: %d valid reviews, %d invalid.",
             dataset_id, valid_rows_count, invalid_rows_count
@@ -273,21 +333,53 @@ def run_dataset_ingestion(dataset_id: str, job_id: str = None) -> bool:
     except Exception as exc:
         logger.exception("Processing failed for Dataset %s: %s", dataset_id, exc)
         safe_msg = str(exc)
-        dataset.status = DatasetStatus.FAILED
-        dataset.error_summary = safe_msg
-        dataset.save(update_fields=["status", "error_summary"])
+        failure_time = timezone.now()
+
+        # Atomic cleanup: ensure FAILED datasets contain zero orphaned or partial reviews
+        with transaction.atomic():
+            dataset.reviews.all().delete()
+            dataset.processed_rows = 0
+            dataset.valid_rows = 0
+            dataset.status = DatasetStatus.FAILED
+            dataset.error_summary = safe_msg
+            dataset.completed_at = failure_time
+            dataset.save(
+                update_fields=[
+                    "status",
+                    "error_summary",
+                    "processed_rows",
+                    "valid_rows",
+                    "completed_at",
+                ]
+            )
 
         if job:
             job.status = JobStatus.FAILED
+            job.completed_at = failure_time
             job.error_code = exc.__class__.__name__
             job.safe_error_message = safe_msg
-            job.save(update_fields=["status", "error_code", "safe_error_message"])
+            job.save(
+                update_fields=[
+                    "status",
+                    "completed_at",
+                    "error_code",
+                    "safe_error_message",
+                ]
+            )
+
+        clear_dataset_analytics_cache(str(dataset.id), dataset.completed_at)
         return False
 
 
-def _process_review_batch(dataset: Dataset, job: ProcessingJob | None, reviews: list[Review]):
+def _process_review_batch(
+    dataset: Dataset,
+    job: ProcessingJob | None,
+    reviews: list[Review],
+    current_processed_count: int,
+):
     """
     Atomic bulk write and batched inference for a bounded chunk of reviews.
+    Updates progress counters directly without full-table database counts.
     """
     if not reviews:
         return
@@ -315,12 +407,14 @@ def _process_review_batch(dataset: Dataset, job: ProcessingJob | None, reviews: 
                 )
             )
 
-        SentimentResult.objects.bulk_create(sentiment_records, batch_size=len(sentiment_records))
+        SentimentResult.objects.bulk_create(
+            sentiment_records, batch_size=len(sentiment_records)
+        )
 
-        # 4. Update progress counters
-        dataset.processed_rows = Review.objects.filter(dataset=dataset).count()
+        # 4. Update progress counters without expensive full-table count
+        dataset.processed_rows = current_processed_count
         dataset.save(update_fields=["processed_rows"])
 
         if job:
-            job.progress_count = dataset.processed_rows
+            job.progress_count = current_processed_count
             job.save(update_fields=["progress_count"])

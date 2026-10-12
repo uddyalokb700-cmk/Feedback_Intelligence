@@ -14,6 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.permissions import IsDatasetOwner
+from analytics.services import clear_dataset_analytics_cache
 from datasets.models import Dataset, DatasetStatus, JobStatus, ProcessingJob
 from datasets.serializers import (
     DatasetDetailSerializer,
@@ -160,6 +161,9 @@ class DatasetDetailAPIView(APIView):
 
     def delete(self, request, pk):
         dataset = self.get_object(pk, request.user)
+
+        # Invalidate any cached analytics before deleting
+        clear_dataset_analytics_cache(str(dataset.id), dataset.completed_at)
 
         # Remove local file safely
         try:

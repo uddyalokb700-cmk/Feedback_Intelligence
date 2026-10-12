@@ -5,7 +5,7 @@ Views and API endpoints for review listing, filtering, detail inspection, and ex
 import csv
 
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponse
+from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404, render
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
@@ -121,10 +121,18 @@ class ReviewDetailAPIView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+class Echo:
+    """An object that implements just the write method of the file-like interface for CSV streaming."""
+
+    def write(self, value):
+        return value
+
+
 class ReviewExportAPIView(APIView):
     """
     GET /api/datasets/{id}/reviews/export/
     Export authorized dataset reviews to a clean CSV file with applied filters.
+    Uses bounded memory streaming (StreamingHttpResponse) to handle arbitrarily large datasets.
     """
 
     permission_classes = [IsAuthenticated, IsDatasetOwner]
@@ -143,36 +151,39 @@ class ReviewExportAPIView(APIView):
         if filterset.is_valid():
             queryset = filterset.qs
 
-        response = HttpResponse(content_type="text/csv")
         safe_name = dataset.name.replace(" ", "_").lower()
-        response["Content-Disposition"] = f'attachment; filename="{safe_name}_reviews_export.csv"'
 
-        writer = csv.writer(response)
-        writer.writerow([
-            "review_id",
-            "external_review_id",
-            "review_text",
-            "rating",
-            "review_date",
-            "product_category",
-            "sentiment_label",
-            "sentiment_confidence",
-            "model_version",
-        ])
-
-        # Bounded streaming iterator for memory efficiency
-        for review in queryset.iterator(chunk_size=1000):
-            sent = getattr(review, "sentiment", None)
-            writer.writerow([
-                review.id,
-                review.external_review_id or "",
-                review.review_text,
-                review.rating if review.rating is not None else "",
-                review.review_date.isoformat() if review.review_date else "",
-                review.product_category or "",
-                sent.label if sent else "",
-                sent.confidence if sent and sent.confidence is not None else "",
-                sent.model_version if sent else "",
+        def csv_row_generator(qs):
+            pseudo_buffer = Echo()
+            writer = csv.writer(pseudo_buffer)
+            yield writer.writerow([
+                "review_id",
+                "external_review_id",
+                "review_text",
+                "rating",
+                "review_date",
+                "product_category",
+                "sentiment_label",
+                "sentiment_confidence",
+                "model_version",
             ])
+            for review in qs.iterator(chunk_size=1000):
+                sent = getattr(review, "sentiment", None)
+                yield writer.writerow([
+                    review.id,
+                    review.external_review_id or "",
+                    review.review_text,
+                    review.rating if review.rating is not None else "",
+                    review.review_date.isoformat() if review.review_date else "",
+                    review.product_category or "",
+                    sent.label if sent else "",
+                    sent.confidence if sent and sent.confidence is not None else "",
+                    sent.model_version if sent else "",
+                ])
 
+        response = StreamingHttpResponse(
+            csv_row_generator(queryset),
+            content_type="text/csv",
+        )
+        response["Content-Disposition"] = f'attachment; filename="{safe_name}_reviews_export.csv"'
         return response

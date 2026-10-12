@@ -40,11 +40,22 @@ STOPWORDS = {
 }
 
 
+def make_cache_key(prefix: str, dataset_id: str, completed_at=None) -> str:
+    """Generate a sanitized, memcached-compliant cache key."""
+    ts = ""
+    if completed_at is not None:
+        if hasattr(completed_at, "timestamp"):
+            ts = f"_{int(completed_at.timestamp())}"
+        else:
+            ts = f"_{str(completed_at).replace(' ', '_').replace(':', '_')}"
+    return f"{prefix}_{dataset_id}{ts}"
+
+
 def get_summary_metrics(dataset: Dataset, use_cache: bool = True) -> dict:
     """
     Compute core summary KPIs using pure database aggregation queries.
     """
-    cache_key = f"cfi_summary_{dataset.id}_{dataset.completed_at}"
+    cache_key = make_cache_key("cfi_summary", str(dataset.id), dataset.completed_at)
     if use_cache:
         cached = cache.get(cache_key)
         if cached:
@@ -155,7 +166,7 @@ def get_trends(dataset: Dataset) -> dict:
     Aggregate review volume, sentiment count, and average rating grouped by date.
     Uses database-level date truncation.
     """
-    cache_key = f"cfi_trends_{dataset.id}_{dataset.completed_at}"
+    cache_key = make_cache_key("cfi_trends", str(dataset.id), dataset.completed_at)
     cached = cache.get(cache_key)
     if cached:
         return cached
@@ -207,7 +218,7 @@ def get_category_metrics(dataset: Dataset) -> list[dict]:
     """
     Compute volume, average rating, and sentiment proportion for each product category.
     """
-    cache_key = f"cfi_cats_{dataset.id}_{dataset.completed_at}"
+    cache_key = make_cache_key("cfi_cats", str(dataset.id), dataset.completed_at)
     cached = cache.get(cache_key)
     if cached:
         return cached
@@ -253,7 +264,7 @@ def get_top_terms(dataset: Dataset, limit: int = 15) -> dict:
     Extract top recurring keywords from positive and negative reviews.
     Uses regex tokenization and stopword removal.
     """
-    cache_key = f"cfi_top_terms_{dataset.id}_{dataset.completed_at}"
+    cache_key = make_cache_key("cfi_top_terms", str(dataset.id), dataset.completed_at)
     cached = cache.get(cache_key)
     if cached:
         return cached
@@ -285,3 +296,14 @@ def get_top_terms(dataset: Dataset, limit: int = 15) -> dict:
 
     cache.set(cache_key, result, timeout=CACHE_TTL)
     return result
+
+
+def clear_dataset_analytics_cache(dataset_id: str, completed_at=None):
+    """
+    Invalidate all cached metrics, distributions, trends, and top terms for a dataset.
+    """
+    prefixes = ["cfi_summary", "cfi_trends", "cfi_cats", "cfi_top_terms"]
+    for prefix in prefixes:
+        cache.delete(make_cache_key(prefix, str(dataset_id), completed_at))
+        cache.delete(make_cache_key(prefix, str(dataset_id), None))
+

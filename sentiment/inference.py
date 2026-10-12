@@ -25,7 +25,7 @@ def get_artifacts_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "ml_artifacts"
 
 
-def load_model(version: str = None):
+def load_model(version: str | None = None):
     """
     Load and cache the Scikit-learn sentiment pipeline for the process.
     Loads once per worker process to ensure low inference latency.
@@ -56,7 +56,7 @@ def load_model(version: str = None):
         raise RuntimeError(f"Unable to load sentiment model {target_version}") from e
 
 
-def get_model_metadata(version: str = None) -> dict:
+def get_model_metadata(version: str | None = None) -> dict:
     """Read the evaluation metrics and configuration metadata for the active model."""
     target_version = version or getattr(settings, "ACTIVE_MODEL_VERSION", "v1.0-tfidf-logreg")
     artifacts_dir = get_artifacts_dir()
@@ -78,10 +78,10 @@ def get_model_metadata(version: str = None) -> dict:
     }
 
 
-def predict_batch(texts: list[str], model_version: str = None) -> list[dict]:
+def predict_batch(texts: list[str], model_version: str | None = None) -> list[dict]:
     """
     Perform high-throughput batched sentiment classification.
-    Returns structured predictions with label and calibrated confidence scores.
+    Optimized single-pass vectorization and bounded sub-batch processing.
     """
     if not texts:
         return []
@@ -104,25 +104,43 @@ def predict_batch(texts: list[str], model_version: str = None) -> list[dict]:
     results = [None] * len(texts)
 
     if valid_texts:
-        # Vectorize and predict batch
-        predictions = pipeline.predict(valid_texts)
-        probabilities = pipeline.predict_proba(valid_texts)
+        # Bounded sub-batch inference (max 2,000 items per matrix operation)
+        sub_batch_size = 2000
+        has_named_steps = (
+            hasattr(pipeline, "named_steps")
+            and "tfidf" in pipeline.named_steps
+            and "clf" in pipeline.named_steps
+        )
+        tfidf_step = pipeline.named_steps["tfidf"] if has_named_steps else None
+        clf_step = pipeline.named_steps["clf"] if has_named_steps else None
 
-        for i, idx in enumerate(valid_indices):
-            pred_label = str(predictions[i])
-            probs = probabilities[i]
-            prob_dict = {cls_name: float(probs[c_idx]) for c_idx, cls_name in enumerate(classes)}
+        for start_pos in range(0, len(valid_texts), sub_batch_size):
+            chunk_texts = valid_texts[start_pos : start_pos + sub_batch_size]
+            chunk_indices = valid_indices[start_pos : start_pos + sub_batch_size]
 
-            confidence = round(float(np.max(probs)), 4)
+            # Single-pass vectorization & probability computation
+            if has_named_steps:
+                X = tfidf_step.transform(chunk_texts)
+                probabilities = clf_step.predict_proba(X)
+            else:
+                probabilities = pipeline.predict_proba(chunk_texts)
 
-            results[idx] = {
-                "label": pred_label,
-                "confidence": confidence,
-                "positive_prob": round(float(prob_dict.get("POSITIVE", 0.0)), 4),
-                "neutral_prob": round(float(prob_dict.get("NEUTRAL", 0.0)), 4),
-                "negative_prob": round(float(prob_dict.get("NEGATIVE", 0.0)), 4),
-                "model_version": target_version,
-            }
+            pred_indices = np.argmax(probabilities, axis=1)
+
+            for i, orig_idx in enumerate(chunk_indices):
+                probs = probabilities[i]
+                pred_label = str(classes[pred_indices[i]])
+                prob_dict = {cls_name: float(probs[c_idx]) for c_idx, cls_name in enumerate(classes)}
+                confidence = round(float(np.max(probs)), 4)
+
+                results[orig_idx] = {
+                    "label": pred_label,
+                    "confidence": confidence,
+                    "positive_prob": round(float(prob_dict.get("POSITIVE", 0.0)), 4),
+                    "neutral_prob": round(float(prob_dict.get("NEUTRAL", 0.0)), 4),
+                    "negative_prob": round(float(prob_dict.get("NEGATIVE", 0.0)), 4),
+                    "model_version": target_version,
+                }
 
     # Fill default neutral result for empty or whitespace-only inputs
     for idx in range(len(texts)):
